@@ -418,5 +418,18 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
             }
 
         }
+        AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
+                "OK", true, false);
+
+        if (okBtn != null) {
+            isHome = false;
+            Rect outBounds = new Rect();
+            okBtn.getBoundsInScreen(outBounds);
+            performTap(outBounds.centerX(), outBounds.centerY());
+            okBtn.recycle();
+            ticker.setNotIdle();
+
+        }
+        
     }
 }
