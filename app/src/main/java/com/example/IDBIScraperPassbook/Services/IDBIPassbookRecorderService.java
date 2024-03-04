@@ -80,7 +80,7 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 initialEvent();
                 enterPin();
                 passBookNav();
-                homeNav();
+                // homeNav();
                 if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
                     readTransactions();
                 }
@@ -269,7 +269,7 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
     int totalBalanceIndex = -1;
 
     public void readTransactions() {
-
+        ticker.setNotIdle();
         JSONArray output = new JSONArray();
         String balance = "";
         String modelNumber = "";
@@ -371,6 +371,7 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                     scrollCount++;
                 }
                 if (scrollCount == 3) {
+                    isNavPassbook = false;
                     isHome = false;
                     scrollCount = 0;
                     allTransactionIndex = -1;
@@ -430,6 +431,6 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
             ticker.setNotIdle();
 
         }
-        
+
     }
 }
