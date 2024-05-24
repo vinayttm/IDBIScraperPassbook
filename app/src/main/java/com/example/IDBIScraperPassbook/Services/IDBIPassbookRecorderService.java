@@ -8,12 +8,14 @@ import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
 import com.example.IDBIScraperPassbook.MainActivity;
+import com.example.IDBIScraperPassbook.Repository.CheckUpiStatus;
 import com.example.IDBIScraperPassbook.Repository.QueryUPIStatus;
 import com.example.IDBIScraperPassbook.Repository.SaveBankTransaction;
 import com.example.IDBIScraperPassbook.Repository.UpdateDateForScrapper;
@@ -38,15 +40,27 @@ import java.util.Locale;
 
 public class IDBIPassbookRecorderService extends AccessibilityService {
     boolean loginOnce = true;
+    boolean isNavPassbook = false;
+    boolean isHome = false;
     int appNotOpenCounter = 0;
+    int scrollCount = 0;
+    int allTransactionIndex = -1;
+    int totalBalanceIndex = -1;
+    Handler logoutHandler = new Handler();
     final CaptureTicker ticker = new CaptureTicker(this::processTickerEvent);
-
+    CheckUpiStatus upiStatusChecker = new CheckUpiStatus();
 
     @Override
     protected void onServiceConnected() {
         ticker.startChecking();
         super.onServiceConnected();
     }
+
+    boolean shouldLogout = false;
+    private final Runnable logoutRunnable = () -> {
+        Log.d("Logout Handler", "Finished");
+        shouldLogout = true;
+    };
 
     private void processTickerEvent() {
         Log.d("Ticker", "Processing Event");
@@ -60,6 +74,11 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
         if (rootNode != null) {
             if (findNodeByPackageName(rootNode, Config.packageName) == null) {
                 if (appNotOpenCounter > 4) {
+                    isNavPassbook = false;
+                    isHome = false;
+                    allTransactionIndex = -1;
+                    totalBalanceIndex = -1;
+                    scrollCount = 0;
                     Log.d("App Status", "Not Found");
                     relaunchApp();
                     try {
@@ -70,6 +89,8 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                     appNotOpenCounter = 0;
                     return;
                 }
+                logoutHandler.removeCallbacks(logoutRunnable);
+                logoutHandler.postDelayed(logoutRunnable, 1000 * 60 * 5);
                 appNotOpenCounter++;
             } else {
                 Log.d("App Status", "Found");
@@ -77,27 +98,63 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 rootNode.refresh();
                 checkForSessionExpiry();
                 listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
-                initialEvent();
-                enterPin();
-                passBookNav();
-                // homeNav();
-                if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
-                    readTransactions();
-                }
-                rootNode.refresh();
+
+                CheckUpiStatus.loginCallBack callback = new CheckUpiStatus.loginCallBack() {
+                    @Override
+                    public void onResult(boolean isSuccess) {
+                        if (isSuccess) {
+                            initialEvent();
+                            enterPin();
+                            if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
+                                try {
+                                    Thread.sleep(5000);
+                                } catch (InterruptedException e) {
+                                    throw new RuntimeException(e);
+                                }
+                                readTransactions();
+                            } else {
+                                passBookNav();
+                            }
+                            rootNode.refresh();
+                            if (shouldLogout) {
+                                exitApp();
+                            }
+                        } else {
+                            exitApp();
+                            closeApp();
+                        }
+                    }
+                };
+                upiStatusChecker.checkUpiStatus(callback);
             }
             rootNode.recycle();
         }
     }
 
-    private void initialEvent() {
-        AccessibilityNodeInfo mPassbook = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Mpassbook", true, false);
-        if (mPassbook != null) {
-            Rect outBounds = new Rect();
-            mPassbook.getBoundsInScreen(outBounds);
-            performTap(outBounds.centerX(), outBounds.centerY());
-            mPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+    private void closeApp() {
+        if (!listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("Enter MPIN here")) {
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            isNavPassbook = false;
+            isHome = false;
+            allTransactionIndex = -1;
+            totalBalanceIndex = -1;
+            scrollCount = 0;
         }
+    }
+
+
+    private void initialEvent() {
+        List<String> extractedData = listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
+        if (!extractedData.contains("All Transactions")) {
+            AccessibilityNodeInfo mPassbook = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "mPassbook", true, false);
+            if (mPassbook != null) {
+                Rect outBounds = new Rect();
+                mPassbook.getBoundsInScreen(outBounds);
+                performTap(outBounds.centerX(), outBounds.centerY());
+                mPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+        }
+
     }
 
     private void relaunchApp() {
@@ -129,19 +186,33 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
         }
     }
 
-    boolean isNavPassbook = false;
-    boolean isHome = false;
+    private void exitApp() {
+        AccessibilityNodeInfo exitNode = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Exit");
+        if (exitNode != null) {
+            exitNode.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            shouldLogout = false;
+            logoutHandler.removeCallbacks(logoutRunnable);
+            logoutHandler.postDelayed(logoutRunnable, 1000 * 60 * 5);
+            ticker.setNotIdle();
+        }
+
+    }
+
 
     private void passBookNav() {
-        if (isNavPassbook) return;
-        AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
-        if (navPassbook != null) {
-            boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            if (isClick) {
-                isNavPassbook = true;
+        List<String> extractedData = listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
+        if (extractedData.contains("Passbook")) {
+            if (isNavPassbook) return;
+            AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
+            if (navPassbook != null) {
+                boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                if (isClick) {
+                    isNavPassbook = true;
+                }
             }
         }
     }
+
 
     private void homeNav() {
         if (isHome) return;
@@ -264,11 +335,9 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
         }
     }
 
-    int scrollCount = 0;
-    int allTransactionIndex = -1;
-    int totalBalanceIndex = -1;
 
     public void readTransactions() {
+
         ticker.setNotIdle();
         JSONArray output = new JSONArray();
         String balance = "";
@@ -346,7 +415,7 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                     path.moveTo(startX, startY);
                     path.lineTo(endX, endY);
                     GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
-                    gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 100));
+                    gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 500));
                     dispatchGesture(gestureBuilder.build(), null, null);
                     Log.d("API BODY", output.toString());
                     Log.d("API BODY Length", String.valueOf(output.length()));
@@ -364,14 +433,25 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                     }, () -> {
                     }).evaluate();
                     try {
-                        Thread.sleep(10000);
+                        Thread.sleep(5000);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                     scrollCount++;
                 }
                 if (scrollCount == 3) {
-                    isNavPassbook = false;
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
+                    if (navPassbook != null) {
+                        boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        if (isClick) {
+                            isNavPassbook = true;
+                        }
+                    }
                     isHome = false;
                     scrollCount = 0;
                     allTransactionIndex = -1;
@@ -389,6 +469,9 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
         AccessibilityNodeInfo targetNode3 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Session Expired. Please login again.", true, false);
         AccessibilityNodeInfo targetNode4 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "error:1e00007b:Cipher functions:OPENSSL_internal:WRONG_FINAL_BLOCK_LENGTH", true, false);
         AccessibilityNodeInfo targetNode5 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "(Status Code:) Error... Please try again", true, false);
+        AccessibilityNodeInfo targetNode6 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Do you want to logout?", true, false);
+
+
         if (targetNode1 != null) {
             AccessibilityNodeInfo inputTextField = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
                     "I Accept the Risk and provide my consent to proceed", true, false);
@@ -414,23 +497,42 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                     "OK", true, false);
             if (okBtn != null) {
                 okBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                isHome = false;
+                isNavPassbook = false;
                 ticker.setNotIdle();
             }
 
         }
         AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
                 "OK", true, false);
-
         if (okBtn != null) {
-            isHome = false;
+            isNavPassbook = false;
             Rect outBounds = new Rect();
             okBtn.getBoundsInScreen(outBounds);
             performTap(outBounds.centerX(), outBounds.centerY());
             okBtn.recycle();
             ticker.setNotIdle();
-
+        }
+        AccessibilityNodeInfo yesBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
+                "YES", true, false);
+        if (yesBtn != null) {
+            Rect outBounds = new Rect();
+            yesBtn.getBoundsInScreen(outBounds);
+            performTap(outBounds.centerX(), outBounds.centerY());
+            yesBtn.recycle();
+            isNavPassbook = false;
+            isHome = false;
+            totalBalanceIndex = -1;
+            allTransactionIndex = -1;
+            ticker.setNotIdle();
         }
 
+        AccessibilityNodeInfo msg = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Are you sure want to exit?", false, false);
+        if (msg != null) {
+            AccessibilityNodeInfo confirm = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Confirm", true, true);
+            if (confirm != null) {
+                confirm.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                ticker.setNotIdle();
+            }
+        }
     }
 }
