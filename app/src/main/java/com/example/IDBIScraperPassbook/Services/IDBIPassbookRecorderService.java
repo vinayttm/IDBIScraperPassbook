@@ -93,39 +93,56 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 logoutHandler.postDelayed(logoutRunnable, 1000 * 60 * 5);
                 appNotOpenCounter++;
             } else {
-                Log.d("App Status", "Found");
-                if (SharedData.isTransaction) return;
-                rootNode.refresh();
-                checkForSessionExpiry();
-                listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
-
-                CheckUpiStatus.loginCallBack callback = new CheckUpiStatus.loginCallBack() {
-                    @Override
-                    public void onResult(boolean isSuccess) {
-                        if (isSuccess) {
-                            initialEvent();
-                            enterPin();
-                            if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
-                                try {
-                                    Thread.sleep(5000);
-                                } catch (InterruptedException e) {
-                                    throw new RuntimeException(e);
-                                }
-                                readTransactions();
-                            } else {
-                                passBookNav();
-                            }
-                            rootNode.refresh();
-                            if (shouldLogout) {
-                                exitApp();
-                            }
-                        } else {
-                            exitApp();
-                            closeApp();
+                if (shouldLogout) {
+                    exitApp();
+                } else {
+                    Log.d("App Status", "Found");
+                    checkForSessionExpiry();
+                    listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
+                    initialEvent();
+                    enterPin();
+                    if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
                         }
+                        readTransactions();
                     }
-                };
-                upiStatusChecker.checkUpiStatus(callback);
+                    passBookNav();
+                }
+
+
+//                checkForSessionExpiry();
+//                listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
+//                CheckUpiStatus.loginCallBack callback = new CheckUpiStatus.loginCallBack() {
+//                    @Override
+//                    public void onResult(boolean isSuccess) {
+//                        if (isSuccess) {
+//                            initialEvent();
+//                            enterPin();
+//
+//                            if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("All Transactions")) {
+//                                try {
+//                                    Thread.sleep(5000);
+//                                } catch (InterruptedException e) {
+//                                    throw new RuntimeException(e);
+//                                }
+//                                readTransactions();
+//                            }
+//                            passBookNav();
+//                            if (shouldLogout) {
+//                                exitApp();
+//                            }
+//                        } else {
+//                            exitApp();
+//                            closeApp();
+//                        }
+//                    }
+//                };
+//                upiStatusChecker.checkUpiStatus(callback);
+
+
             }
             rootNode.recycle();
         }
@@ -154,15 +171,12 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 mPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
         }
-
     }
 
     private void relaunchApp() {
-        // Might fail not tested
         if (MainActivity.isAccessibilityServiceEnabled(this, this.getClass())) {
             new QueryUPIStatus(() -> {
                 Intent intent = getPackageManager().getLaunchIntentForPackage(Config.packageName);
-//                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 startActivity(intent);
             }, () -> {
                 Toast.makeText(this, "Scrapper inactive", Toast.LENGTH_SHORT).show();
@@ -174,13 +188,27 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
     public void enterPin() {
         String pinValue = Config.loginPin;
         if (!pinValue.isEmpty()) {
-            if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("Enter MPIN here")) {
+            if (listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow())).contains("Welcome")) {
                 AccessibilityNodeInfo editText = findNodeByClassName(getTopMostParentNode(getRootInActiveWindow()), "android.widget.EditText");
                 if (editText != null) {
                     Bundle arguments = new Bundle();
                     arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pinValue.trim());
                     editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
                     editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                }
+
+                AccessibilityNodeInfo login = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "LOGIN", false, true);
+                if (login != null) {
+                    Rect outBounds = new Rect();
+                    login.getBoundsInScreen(outBounds);
+                    performTap(outBounds.centerX(), outBounds.centerY());
+                    login.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 }
             }
         }
@@ -195,20 +223,16 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
             logoutHandler.postDelayed(logoutRunnable, 1000 * 60 * 5);
             ticker.setNotIdle();
         }
-
     }
 
 
     private void passBookNav() {
-        List<String> extractedData = listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
-        if (extractedData.contains("Passbook")) {
-            if (isNavPassbook) return;
-            AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
-            if (navPassbook != null) {
-                boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                if (isClick) {
-                    isNavPassbook = true;
-                }
+        if (isNavPassbook) return;
+        AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
+        if (navPassbook != null) {
+            boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            if (isClick) {
+                isNavPassbook = true;
             }
         }
     }
@@ -337,7 +361,6 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
 
 
     public void readTransactions() {
-
         ticker.setNotIdle();
         JSONArray output = new JSONArray();
         String balance = "";
@@ -369,122 +392,142 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 dataList.add(str);
             }
         }
-        System.out.println("dataList " + dataList);
-        for (int i = 0; i < dataList.size(); i += 4) {
-            JSONObject jsonObject = new JSONObject();
-            String description = dataList.get(i);
-            String date = dataList.get(i + 1);
-            String amount = dataList.get(i + 3);
-            if (amount.contains("Dr")) {
-                amount = "-" + amount;
-            }
-            if (amount.contains("₹")) {
-                amount = amount.replace("₹", "").trim();
-                amount = amount.replace("Cr", "").trim();
-                amount = amount.replace("Dr", "").trim();
-            }
-            try {
-                jsonObject.put("Description", extractUTRFromDesc(description));
-                jsonObject.put("UPIId", getUPIId(description));
-                jsonObject.put("CreatedDate", convertDateFormat(date));
-                jsonObject.put("Amount", amount);
-                jsonObject.put("RefNumber", extractUTRFromDesc(description));
-                jsonObject.put("AccountBalance", balance);
-                jsonObject.put("BankName", Config.bankName + Config.bankLoginId);
-                jsonObject.put("BankLoginId", Config.bankLoginId);
-                jsonObject.put("DeviceInfo", modelNumber + "-" + secureId);
-
-            } catch (JSONException e) {
-                throw new RuntimeException(e);
-            }
-            output.put(jsonObject);
-
-        }
-        if (output.length() > 0) {
-            AccessibilityNodeInfo scrollNode = findNodeByClassName(getTopMostParentNode(getRootInActiveWindow()), "android.widget.ListView");
-            if (scrollNode != null) {
-                while (scrollCount < 3) {
-                    Rect scrollBounds = new Rect();
-                    scrollNode.getBoundsInScreen(scrollBounds);
-                    int startX = scrollBounds.centerX();
-                    int startY = scrollBounds.centerY();
-                    int endX = startX;
-                    int scrollDistance = 150;
-                    int endY = startY - scrollDistance;
-                    Path path = new Path();
-                    path.moveTo(startX, startY);
-                    path.lineTo(endX, endY);
-                    GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
-                    gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 500));
-                    dispatchGesture(gestureBuilder.build(), null, null);
-                    Log.d("API BODY", output.toString());
-                    Log.d("API BODY Length", String.valueOf(output.length()));
-                    JSONObject result = new JSONObject();
-                    try {
-                        result.put("Result", AES.encrypt(output.toString()));
-                    } catch (JSONException e) {
-                        throw new RuntimeException(e);
-                    }
-                    new QueryUPIStatus(() -> {
-                        new SaveBankTransaction(() -> {
-                        }, () -> {
-                        }).evaluate(result.toString());
-                        new UpdateDateForScrapper().evaluate();
-                    }, () -> {
-                    }).evaluate();
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                    scrollCount++;
+        List<String> findUntagged = listAllTextsInActiveWindow(getTopMostParentNode(getRootInActiveWindow()));
+        if (findUntagged.contains("Untagged")) {
+            System.out.println("dataList " + dataList);
+            for (int i = 0; i < dataList.size(); i += 4) {
+                JSONObject jsonObject = new JSONObject();
+                String description = dataList.get(i);
+                String date = dataList.get(i + 1);
+                String amount = dataList.get(i + 3);
+                if (amount.contains("Dr")) {
+                    amount = "-" + amount;
                 }
-                if (scrollCount == 3) {
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    AccessibilityNodeInfo navPassbook = findNodeByContentDescription(getTopMostParentNode(getRootInActiveWindow()), "Passbook");
-                    if (navPassbook != null) {
-                        boolean isClick = navPassbook.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                        if (isClick) {
-                            isNavPassbook = true;
+                if (amount.contains("₹")) {
+                    amount = amount.replace("₹", "").trim();
+                    amount = amount.replace("Cr", "").trim();
+                    amount = amount.replace("Dr", "").trim();
+                }
+                try {
+                    jsonObject.put("Description", extractUTRFromDesc(description));
+                    jsonObject.put("UPIId", getUPIId(description));
+                    jsonObject.put("CreatedDate", convertDateFormat(date));
+                    jsonObject.put("Amount", amount.replace(" ", ""));
+                    jsonObject.put("RefNumber", extractUTRFromDesc(description));
+                    jsonObject.put("AccountBalance", balance);
+                    jsonObject.put("BankName", Config.bankName + Config.bankLoginId);
+                    jsonObject.put("BankLoginId", Config.bankLoginId);
+                    jsonObject.put("DeviceInfo", modelNumber + "-" + secureId);
+
+                } catch (JSONException e) {
+                    throw new RuntimeException(e);
+                }
+                output.put(jsonObject);
+
+            }
+            if (output.length() > 0) {
+                AccessibilityNodeInfo scrollNode = findNodeByClassName(getTopMostParentNode(getRootInActiveWindow()), "android.widget.ListView");
+                if (scrollNode != null) {
+                    while (scrollCount < 4) {
+                        Rect scrollBounds = new Rect();
+                        scrollNode.getBoundsInScreen(scrollBounds);
+                        int startX = scrollBounds.centerX();
+                        int startY = scrollBounds.centerY();
+                        int endX = startX;
+                        int scrollDistance = 150;
+                        int endY = startY - scrollDistance;
+                        Path path = new Path();
+                        path.moveTo(startX, startY);
+                        path.lineTo(endX, endY);
+                        GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
+                        gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 500));
+                        dispatchGesture(gestureBuilder.build(), null, null);
+                        Log.d("API BODY", output.toString());
+                        Log.d("API BODY Length", String.valueOf(output.length()));
+                        JSONObject result = new JSONObject();
+                        try {
+                            result.put("Result", AES.encrypt(output.toString()));
+                        } catch (JSONException e) {
+                            throw new RuntimeException(e);
                         }
+                        new QueryUPIStatus(() -> {
+                            new SaveBankTransaction(() -> {
+                            }, () -> {
+                            }).evaluate(result.toString());
+                            new UpdateDateForScrapper().evaluate();
+                        }, () -> {
+                        }).evaluate();
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                        scrollCount++;
                     }
-                    isHome = false;
-                    scrollCount = 0;
-                    allTransactionIndex = -1;
-                    totalBalanceIndex = -1;
+                    if (scrollCount == 4) {
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                        isNavPassbook = false;
+                        isHome = false;
+                        scrollCount = 0;
+                        allTransactionIndex = -1;
+                        totalBalanceIndex = -1;
+                    }
                 }
             }
+        } else {
+            isNavPassbook = false;
         }
     }
 
 
     public void checkForSessionExpiry() {
         ticker.setNotIdle();
-        AccessibilityNodeInfo targetNode1 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "I Accept the Risk and provide my consent to proceed", true, false);
-        AccessibilityNodeInfo targetNode2 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Sorry! We are unable to service your request at this time. Please try again.", true, false);
-        AccessibilityNodeInfo targetNode3 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Session Expired. Please login again.", true, false);
-        AccessibilityNodeInfo targetNode4 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "error:1e00007b:Cipher functions:OPENSSL_internal:WRONG_FINAL_BLOCK_LENGTH", true, false);
-        AccessibilityNodeInfo targetNode5 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "(Status Code:) Error... Please try again", true, false);
-        AccessibilityNodeInfo targetNode6 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Do you want to logout?", true, false);
+        AccessibilityNodeInfo targetNode1 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "I Accept the Risk and provide my consent to proceed", false, false);
+//        AccessibilityNodeInfo targetNode2 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Sorry! We are unable to service your request at this time. Please try again.", false, false);
+        AccessibilityNodeInfo targetNode3 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Session Expired. Please login again.", false, false);
+//        AccessibilityNodeInfo targetNode4 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "error:1e00007b:Cipher functions:OPENSSL_internal:WRONG_FINAL_BLOCK_LENGTH", false, false);
+        AccessibilityNodeInfo targetNode5 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Alert!", false, false);
+        AccessibilityNodeInfo targetNode6 = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Do you want to logout?", false, false);
 
 
         if (targetNode1 != null) {
-            AccessibilityNodeInfo inputTextField = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
-                    "I Accept the Risk and provide my consent to proceed", true, false);
-            if (inputTextField != null) {
-                inputTextField.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                inputTextField.recycle();
-                ticker.setNotIdle();
-            }
+            targetNode1.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            isNavPassbook = false;
+            targetNode1.recycle();
+            ticker.setNotIdle();
         }
-        if (targetNode2 != null || targetNode3 != null) {
+
+//        if (targetNode2 != null || targetNode3 != null) {
+//            AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
+//                    "OK", true, false);
+//            if (okBtn != null) {
+//                Rect outBounds = new Rect();
+//                okBtn.getBoundsInScreen(outBounds);
+//                performTap(outBounds.centerX(), outBounds.centerY());
+//                okBtn.recycle();
+//                ticker.setNotIdle();
+//            }
+//        }
+//        if (targetNode5 != null || targetNode4 != null) {
+//            AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
+//                    "OK", true, false);
+//            if (okBtn != null) {
+//                okBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+//                isNavPassbook = false;
+//                ticker.setNotIdle();
+//            }
+//
+//        }
+
+        if (targetNode3 != null) {
             AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
                     "OK", true, false);
             if (okBtn != null) {
+                isNavPassbook = false;
                 Rect outBounds = new Rect();
                 okBtn.getBoundsInScreen(outBounds);
                 performTap(outBounds.centerX(), outBounds.centerY());
@@ -492,47 +535,42 @@ public class IDBIPassbookRecorderService extends AccessibilityService {
                 ticker.setNotIdle();
             }
         }
-        if (targetNode5 != null || targetNode4 != null) {
+
+        if (targetNode5 != null) {
             AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
                     "OK", true, false);
             if (okBtn != null) {
-                okBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 isNavPassbook = false;
-                ticker.setNotIdle();
-            }
-
-        }
-        AccessibilityNodeInfo okBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
-                "OK", true, false);
-        if (okBtn != null) {
-            isNavPassbook = false;
-            Rect outBounds = new Rect();
-            okBtn.getBoundsInScreen(outBounds);
-            performTap(outBounds.centerX(), outBounds.centerY());
-            okBtn.recycle();
-            ticker.setNotIdle();
-        }
-        AccessibilityNodeInfo yesBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
-                "YES", true, false);
-        if (yesBtn != null) {
-            Rect outBounds = new Rect();
-            yesBtn.getBoundsInScreen(outBounds);
-            performTap(outBounds.centerX(), outBounds.centerY());
-            yesBtn.recycle();
-            isNavPassbook = false;
-            isHome = false;
-            totalBalanceIndex = -1;
-            allTransactionIndex = -1;
-            ticker.setNotIdle();
-        }
-
-        AccessibilityNodeInfo msg = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Are you sure want to exit?", false, false);
-        if (msg != null) {
-            AccessibilityNodeInfo confirm = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Confirm", true, true);
-            if (confirm != null) {
-                confirm.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Rect outBounds = new Rect();
+                okBtn.getBoundsInScreen(outBounds);
+                performTap(outBounds.centerX(), outBounds.centerY());
+                okBtn.recycle();
                 ticker.setNotIdle();
             }
         }
+        if (targetNode6 != null) {
+            AccessibilityNodeInfo yesBtn = findNodeByText(getTopMostParentNode(getRootInActiveWindow()),
+                    "YES", false, false);
+            if (yesBtn != null) {
+                Rect outBounds = new Rect();
+                yesBtn.getBoundsInScreen(outBounds);
+                performTap(outBounds.centerX(), outBounds.centerY());
+                yesBtn.recycle();
+                isNavPassbook = false;
+                isHome = false;
+                totalBalanceIndex = -1;
+                allTransactionIndex = -1;
+                ticker.setNotIdle();
+            }
+        }
+
+//        AccessibilityNodeInfo msg = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Are you sure want to exit?", false, false);
+//        if (msg != null) {
+//            AccessibilityNodeInfo confirm = findNodeByText(getTopMostParentNode(getRootInActiveWindow()), "Confirm", true, true);
+//            if (confirm != null) {
+//                confirm.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+//                ticker.setNotIdle();
+//            }
+//        }
     }
 }
